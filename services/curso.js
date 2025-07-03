@@ -3,27 +3,24 @@ const pool = require("../database/db.js");
 // Función para registrar auditoría de curso
 async function registrarAuditoriaCurso({
   id_curso,
-  nombre_anterior, nombre_nuevo,
-  docente_anterior, docente_nuevo,
-  estado_anterior, estado_nuevo,
+  nombre_anterior, nombre_nuevo, 
+  estado_anterior, estado_nuevo,observacion,
   operacion, usuario
 }) {
-  const fecha = new Date().toISOString().split('T')[0]; // yyyy-mm-dd
+  const fecha = new Date(); 
 
   const sqlAudit = `
     INSERT INTO tb_audit_curso (
-      id_curso, nombre_curso_anterior, nombre_curso_nuevo,
-      docente_anterior, docente_nuevo,
-      estado_anterior, estado_nuevo,
+      id_curso, nombre_curso_anterior, nombre_curso_nuevo, 
+      estado_anterior, estado_nuevo,observacion,
       operacion, fecha_modificacion, usuario_modificador
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
   `;
 
   const values = [
     id_curso,
-    nombre_anterior, nombre_nuevo,
-    docente_anterior, docente_nuevo,
-    estado_anterior, estado_nuevo,
+    nombre_anterior, nombre_nuevo, 
+    estado_anterior, estado_nuevo,observacion,
     operacion, fecha, usuario
   ];
 
@@ -72,26 +69,29 @@ async function obtenerTodosLosCursosAuditoria() {
 }
 // Insertar curso
 async function insertarCurso(datos, usuarioModificador) {
-  const { nombre_curso, docente } = datos;
+  const { nombre_curso } = datos;
 
+  const cursoExistente = await pool.query("SELECT * FROM tb_curso WHERE nombre_curso = $1", [nombre_curso]);
+  if (cursoExistente.rowCount > 0) {
+    throw new Error("Curso ya registrado");
+  }
   const sqlInsert = `
-    INSERT INTO tb_curso (nombre_curso, docente, estado)
-    VALUES ($1, $2, true)
+    INSERT INTO tb_curso (nombre_curso, estado)
+    VALUES ($1, true)
     RETURNING id_curso
   `;
 
   try {
-    const result = await pool.query(sqlInsert, [nombre_curso, docente]);
+    const result = await pool.query(sqlInsert, [nombre_curso]);
     const id_curso = result.rows[0].id_curso;
 
     await registrarAuditoriaCurso({
       id_curso,
       nombre_anterior: null,
       nombre_nuevo: nombre_curso,
-      docente_anterior: null,
-      docente_nuevo: docente,
       estado_anterior: null,
       estado_nuevo: true,
+      observacion:'Nuevo registro',
       operacion: 'INSERT',
       usuario: usuarioModificador.usuario
     });
@@ -105,7 +105,7 @@ async function insertarCurso(datos, usuarioModificador) {
 
 // Actualizar curso
 async function actualizarCurso(id, datos, usuarioModificador) {
-  const { nombre_curso, docente, estado } = datos;
+  const { nombre_curso, estado,observacion } = datos;
 
   try {
     const resultAnterior = await pool.query(
@@ -118,16 +118,23 @@ async function actualizarCurso(id, datos, usuarioModificador) {
     }
 
     const anterior = resultAnterior.rows[0];
+    const resultDuplicado = await pool.query(
+      "SELECT * FROM tb_curso WHERE LOWER(nombre_curso) = LOWER($1) AND id_curso <> $2",
+      [nombre_curso, id]
+    );
+
+    if (resultDuplicado.rowCount > 0) {
+      throw new Error("Ya existe un curso con ese nombre");
+    }
 
     const sqlUpdate = `
       UPDATE tb_curso
-      SET nombre_curso = $1, docente = $2, estado = $3
-      WHERE id_curso = $4
+      SET nombre_curso = $1, estado = $2
+      WHERE id_curso = $3
     `;
 
     await pool.query(sqlUpdate, [
       nombre_curso,
-      docente,
       estado,
       id
     ]);
@@ -136,10 +143,9 @@ async function actualizarCurso(id, datos, usuarioModificador) {
       id_curso: id,
       nombre_anterior: anterior.nombre_curso,
       nombre_nuevo: nombre_curso,
-      docente_anterior: anterior.docente,
-      docente_nuevo: docente,
       estado_anterior: anterior.estado,
       estado_nuevo: estado,
+       observacion:observacion,
       operacion: 'UPDATE',
       usuario: usuarioModificador.usuario
     });
@@ -176,11 +182,10 @@ async function eliminarCurso(id, usuarioModificador) {
     await registrarAuditoriaCurso({
       id_curso: id,
       nombre_anterior: anterior.nombre_curso,
-      nombre_nuevo: anterior.nombre_curso, // igual porque no cambia
-      docente_anterior: anterior.docente,
-      docente_nuevo: anterior.docente,
+      nombre_nuevo: anterior.nombre_curso, 
       estado_anterior: anterior.estado,
       estado_nuevo: false,
+      observacion:'Registro eliminado',
       operacion: 'DELETE',
       usuario: usuarioModificador.usuario
     });

@@ -33,6 +33,30 @@ const listarAuditoria = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+const crearMultiples = async (req, res) => {
+  try {
+    const resultado = await asistenciaService.insertarMultiplesAsistencias(req.body, req.user);
+    res.json({ mensaje: "Asistencias creadas correctamente", resultado });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const obtenerPorFechaYCurso = async (req, res) => {
+  try {
+    const { cursoSeccion, fecha } = req.query;
+
+    if (!cursoSeccion || !fecha) {
+      return res.status(400).json({ error: "Faltan parámetros: cursoSeccion y fecha son requeridos." });
+    }
+
+    const resultado = await asistenciaService.obtenerPorFechaYCurso(cursoSeccion, fecha);
+    res.json(resultado);
+  } catch (error) {
+    console.error("❌ Error en obtenerPorFechaYCurso:", error);
+    res.status(500).json({ error: "Error al consultar asistencias." });
+  }
+};
 
 const actualizar = async (req, res) => {
   try {
@@ -57,8 +81,8 @@ const eliminar = async (req, res) => {
 module.exports = {
   insertar,
   listar,
-  actualizar,
+  actualizar,obtenerPorFechaYCurso,
   eliminar,
   listarAuditoria,
-  listarTodo
+  listarTodo,crearMultiples
 };

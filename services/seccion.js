@@ -7,10 +7,10 @@ async function registrarAuditoriaSeccion({
   grado_anterior, grado_nuevo,
   nombre_anterior, nombre_nuevo,
   periodo_anterior, periodo_nuevo,
-  estado_anterior, estado_nuevo,
+  estado_anterior, estado_nuevo,observacion,
   operacion, usuario
 }) {
-  const fecha = new Date().toISOString().split('T')[0];
+ const fecha = new Date(); 
 
   const sqlAudit = `
     INSERT INTO tb_audit_seccion (
@@ -18,11 +18,11 @@ async function registrarAuditoriaSeccion({
       grado_anterior, grado_nuevo,
       nombre_anterior, nombre_nuevo,
       periodo_anterior, periodo_nuevo,
-      estado_anterior, estado_nuevo,
+      estado_anterior, estado_nuevo,observacion,
       operacion, fecha_modificacion, usuario_modificador
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7,
-      $8, $9, $10, $11, $12, $13, $14
+      $8, $9, $10, $11, $12, $13, $14, $15
     )
   `;
 
@@ -32,7 +32,7 @@ async function registrarAuditoriaSeccion({
     grado_anterior, grado_nuevo,
     nombre_anterior, nombre_nuevo,
     periodo_anterior, periodo_nuevo,
-    estado_anterior, estado_nuevo,
+    estado_anterior, estado_nuevo,observacion,
     operacion, fecha, usuario
   ];
 
@@ -48,6 +48,15 @@ async function registrarAuditoriaSeccion({
 // Insertar sección
 async function insertarSeccion(datos, usuarioModificador) {
   const { aula, grado, nombre, periodo } = datos;
+
+  const existeAula = await pool.query(
+  `SELECT 1 FROM tb_seccion WHERE aula = $1 AND periodo = $2 AND estado=true`,
+    [aula, periodo]
+  );
+
+  if (existeAula.rowCount > 0) {
+    throw new Error("El aula ya está asignada a otra sección (activa) en el mismo periodo");
+  }
 
   const sqlInsert = `
     INSERT INTO tb_seccion (
@@ -74,6 +83,7 @@ async function insertarSeccion(datos, usuarioModificador) {
       periodo_nuevo: periodo,
       estado_anterior: null,
       estado_nuevo: true,
+      observacion:'Nuevo registro',
       operacion: 'INSERT',
       usuario: usuarioModificador.usuario
     });
@@ -87,7 +97,26 @@ async function insertarSeccion(datos, usuarioModificador) {
 
 // Obtener secciones activas
 async function obtenerSecciones() {
-  const sql = "SELECT * FROM tb_seccion WHERE estado = true";
+
+   const sql = `
+    SELECT 
+    s.id_seccion,
+    s.nombre,
+    s.estado,
+    s.aula AS id_aula,
+    a.numero_aula AS aula,
+    s.grado AS id_grado,
+    g.nivel || ' - ' || g.anio AS grado,
+    s.periodo AS id_periodo,
+    p.anio AS periodo
+    FROM tb_seccion s
+    JOIN tb_aula a ON s.aula = a.id_aula
+    JOIN tb_grado g ON s.grado = g.id_grado
+    JOIN tb_periodo_escolar p ON s.periodo = p.id_periodo
+    WHERE s.estado = true
+    ORDER BY p.anio;
+    `;
+ 
   try {
     const result = await pool.query(sql);
     return result.rows;
@@ -96,10 +125,38 @@ async function obtenerSecciones() {
     throw err;
   }
 }
+async function obtenerSeccionesPorGradoPeriodo(grado,periodo) {
+   const sql = `
+ SELECT * FROM tb_seccion WHERE grado = $1 AND periodo = $2 AND estado = true;
 
+  `;
+  try {
+    const result = await pool.query(sql, [grado,periodo]);
+    return result.rows;
+  } catch (err) {
+    console.error("❌ Error al obtener las secciones:", err);
+    throw err;
+  }
+}
 // Obtener todas las secciones
 async function obtenerTodasLasSecciones() {
-  const sql = "SELECT * FROM tb_seccion";
+    const sql = `
+    SELECT 
+      s.id_seccion,
+      s.nombre,
+      s.estado,
+      s.aula AS id_aula,
+      a.numero_aula AS aula,
+      s.grado AS id_grado,
+      g.nivel || ' - ' || g.anio AS grado,
+      s.periodo AS id_periodo,
+      p.anio AS periodo
+    FROM tb_seccion s
+    JOIN tb_aula a ON s.aula = a.id_aula
+    JOIN tb_grado g ON s.grado = g.id_grado
+    JOIN tb_periodo_escolar p ON s.periodo = p.id_periodo
+    ORDER BY p.anio;
+  `;
   try {
     const result = await pool.query(sql);
     return result.rows;
@@ -121,8 +178,8 @@ async function obtenerTodasLasSeccionesAuditoria() {
 }
 // Actualizar sección
 async function actualizarSeccion(id, datos, usuarioModificador) {
-  const { aula, grado, nombre, periodo, estado } = datos;
-
+  const { aula, grado, nombre, periodo, estado,observacion } = datos;
+ 
   try {
     const resultAnterior = await pool.query(
       "SELECT * FROM tb_seccion WHERE id_seccion = $1",
@@ -135,6 +192,17 @@ async function actualizarSeccion(id, datos, usuarioModificador) {
 
     const anterior = resultAnterior.rows[0];
 
+    if (estado === true || aula !== anterior.aula || periodo !== anterior.periodo) {
+      const conflicto = await pool.query(
+        `SELECT 1 FROM tb_seccion 
+        WHERE aula = $1 AND periodo = $2 AND estado = true AND id_seccion != $3`,
+        [aula, periodo, id]
+      );
+      if (conflicto.rowCount > 0) {
+        throw new Error("El aula ya está asignada a otra sección activa en el mismo periodo");
+      }
+    }
+    
     const sqlUpdate = `
       UPDATE tb_seccion
       SET aula = $1, grado = $2, nombre = $3, periodo = $4, estado = $5
@@ -157,6 +225,7 @@ async function actualizarSeccion(id, datos, usuarioModificador) {
       periodo_nuevo: periodo,
       estado_anterior: anterior.estado,
       estado_nuevo: estado,
+      observacion:observacion,
       operacion: 'UPDATE',
       usuario: usuarioModificador.usuario
     });
@@ -199,6 +268,7 @@ async function eliminarSeccion(id, usuarioModificador) {
       periodo_nuevo: anterior.periodo,
       estado_anterior: anterior.estado,
       estado_nuevo: false,
+       observacion:'Registro eliminado',
       operacion: 'DELETE',
       usuario: usuarioModificador.usuario
     });
@@ -216,5 +286,6 @@ module.exports = {
   obtenerTodasLasSecciones,
   actualizarSeccion,
   eliminarSeccion,
+  obtenerSeccionesPorGradoPeriodo,
   obtenerTodasLasSeccionesAuditoria
 };

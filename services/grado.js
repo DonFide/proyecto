@@ -5,31 +5,26 @@ async function registrarAuditoriaGrado({
   id_grado,
   nivel_anterior, nivel_nuevo,
   anio_anterior, anio_nuevo,
-  cupos_totales_anterior, cupos_totales_nuevo,
-  cupos_disponibles_anterior, cupos_disponibles_nuevo,
   estado_anterior, estado_nuevo,
+  observacion,
   operacion, usuario
 }) {
-  const fecha = new Date().toISOString().split('T')[0]; // yyyy-mm-dd
+ const fecha = new Date(); 
 
   const sqlAudit = `
     INSERT INTO tb_audit_grado (
       id_grado, nivel_anterior, nivel_nuevo,
       anio_anterior, anio_nuevo,
-      cupos_totales_anterior, cupos_totales_nuevo,
-      cupos_disponibles_anterior, cupos_disponibles_nuevo,
-      estado_anterior, estado_nuevo,
+      estado_anterior, estado_nuevo,observacion,
       operacion, fecha_modificacion, usuario_modificador
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,$11)
   `;
 
   const values = [
     id_grado,
     nivel_anterior, nivel_nuevo,
     anio_anterior, anio_nuevo,
-    cupos_totales_anterior, cupos_totales_nuevo,
-    cupos_disponibles_anterior, cupos_disponibles_nuevo,
-    estado_anterior, estado_nuevo,
+    estado_anterior, estado_nuevo,observacion,
     operacion, fecha, usuario
   ];
 
@@ -44,34 +39,42 @@ async function registrarAuditoriaGrado({
 
 // Insertar grado
 async function insertarGrado(datos, usuarioModificador) {
-  const { nivel, anio, cupos_totales, cupos_disponibles } = datos;
+  const { nivel, anio } = datos;
+
+  const sqlVerificar = `
+    SELECT id_grado FROM tb_grado
+    WHERE nivel = $1 AND anio = $2
+  `;
 
   const sqlInsert = `
-    INSERT INTO tb_grado (nivel, anio, cupos_totales, cupos_disponibles, estado)
-    VALUES ($1, $2, $3, $4, true)
+    INSERT INTO tb_grado (nivel, anio, estado)
+    VALUES ($1, $2, true)
     RETURNING id_grado
   `;
 
   try {
+    
+    const existe = await pool.query(sqlVerificar, [nivel, anio]);
+    if (existe.rows.length > 0) {
+      throw new Error(`Ya existe un grado con nivel "${nivel}" y año "${anio}".`);
+    }
+ 
     const result = await pool.query(sqlInsert, [
-      nivel, anio, cupos_totales, cupos_disponibles
+      nivel, anio,
     ]);
     const id_grado = result.rows[0].id_grado;
-
+ 
     await registrarAuditoriaGrado({
       id_grado,
       nivel_anterior: null,
       nivel_nuevo: nivel,
       anio_anterior: null,
       anio_nuevo: anio,
-      cupos_totales_anterior: null,
-      cupos_totales_nuevo: cupos_totales,
-      cupos_disponibles_anterior: null,
-      cupos_disponibles_nuevo: cupos_disponibles,
       estado_anterior: null,
       estado_nuevo: true,
+      observacion:'Nuevo registro',
       operacion: 'INSERT',
-      usuario: usuarioModificador.usuario
+      usuario: usuarioModificador.usuario,
     });
 
     return { mensaje: "Grado insertado y auditado", id: id_grado };
@@ -83,7 +86,17 @@ async function insertarGrado(datos, usuarioModificador) {
 
 // Obtener grados activos
 async function obtenerGrados() {
-  const sql = "SELECT * FROM tb_grado WHERE estado = true";
+  const sql = `
+      SELECT * FROM tb_grado where estado=true
+      ORDER BY 
+        CASE nivel
+          WHEN 'inicial' THEN 1
+          WHEN 'primaria' THEN 2
+          WHEN 'secundaria' THEN 3
+          ELSE 4
+        END,
+        anio;
+    `;
   try {
     const result = await pool.query(sql);
     return result.rows;
@@ -95,7 +108,17 @@ async function obtenerGrados() {
 
 // Obtener todos los grados
 async function obtenerTodosLosGrados() {
-  const sql = "SELECT * FROM tb_grado";
+  const sql = `
+      SELECT * FROM tb_grado
+      ORDER BY 
+        CASE nivel
+          WHEN 'inicial' THEN 1
+          WHEN 'primaria' THEN 2
+          WHEN 'secundaria' THEN 3
+          ELSE 4
+        END,
+        anio;
+    `;
   try {
     const result = await pool.query(sql);
     return result.rows;
@@ -117,9 +140,9 @@ async function obtenerTodosLosGradosAuditoria() {
 }
 // Actualizar grado
 async function actualizarGrado(id, datos, usuarioModificador) {
-  const { nivel, anio, cupos_totales, cupos_disponibles, estado } = datos;
+  const { nivel, anio, estado,observacion } = datos;
 
-  try {
+  try { 
     const resultAnterior = await pool.query(
       "SELECT * FROM tb_grado WHERE id_grado = $1",
       [id]
@@ -130,29 +153,36 @@ async function actualizarGrado(id, datos, usuarioModificador) {
     }
 
     const anterior = resultAnterior.rows[0];
+ 
+    const existeDuplicado = await pool.query(
+      `SELECT id_grado FROM tb_grado
+       WHERE nivel = $1 AND anio = $2 AND id_grado <> $3`,
+      [nivel, anio, id]
+    );
 
+    if (existeDuplicado.rowCount > 0) {
+      throw new Error(`Ya existe otro grado con nivel "${nivel}" y año "${anio}".`);
+    }
+ 
     const sqlUpdate = `
       UPDATE tb_grado
-      SET nivel = $1, anio = $2, cupos_totales = $3, cupos_disponibles = $4, estado = $5
-      WHERE id_grado = $6
+      SET nivel = $1, anio = $2, estado = $3
+      WHERE id_grado = $4
     `;
 
     await pool.query(sqlUpdate, [
-      nivel, anio, cupos_totales, cupos_disponibles, estado, id
+      nivel, anio, estado, id
     ]);
-
+ 
     await registrarAuditoriaGrado({
       id_grado: id,
       nivel_anterior: anterior.nivel,
       nivel_nuevo: nivel,
       anio_anterior: anterior.anio,
       anio_nuevo: anio,
-      cupos_totales_anterior: anterior.cupos_totales,
-      cupos_totales_nuevo: cupos_totales,
-      cupos_disponibles_anterior: anterior.cupos_disponibles,
-      cupos_disponibles_nuevo: cupos_disponibles,
       estado_anterior: anterior.estado,
       estado_nuevo: estado,
+      observacion:observacion,
       operacion: 'UPDATE',
       usuario: usuarioModificador.usuario
     });
@@ -164,6 +194,7 @@ async function actualizarGrado(id, datos, usuarioModificador) {
   }
 }
 
+ 
 // Eliminar grado (borrado lógico)
 async function eliminarGrado(id, usuarioModificador) {
   try {
@@ -189,12 +220,9 @@ async function eliminarGrado(id, usuarioModificador) {
       nivel_nuevo: anterior.nivel,
       anio_anterior: anterior.anio,
       anio_nuevo: anterior.anio,
-      cupos_totales_anterior: anterior.cupos_totales,
-      cupos_totales_nuevo: anterior.cupos_totales,
-      cupos_disponibles_anterior: anterior.cupos_disponibles,
-      cupos_disponibles_nuevo: anterior.cupos_disponibles,
       estado_anterior: anterior.estado,
       estado_nuevo: false,
+      observacion:'Registro eliminado',
       operacion: 'DELETE',
       usuario: usuarioModificador.usuario
     });

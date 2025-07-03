@@ -9,10 +9,11 @@ async function registrarAuditoriaUsuario({
   estado_anterior, estado_nuevo,
   password_anterior, password_nuevo,
   rol_anterior, rol_nuevo,
+  empleado_anterior,empleado_nuevo,observacion,
   operacion,
   usuario_modificador
 }) {
-  const fecha = new Date().toISOString().split('T')[0]; // yyyy-mm-dd
+  const fecha = new Date(); 
 
   const sqlAudit = `
     INSERT INTO tb_audit_usuario (
@@ -21,11 +22,12 @@ async function registrarAuditoriaUsuario({
       estado_anterior, estado_nuevo,
       password_anterior, password_nuevo,
       rol_anterior, rol_nuevo,
+      empleado_anterior,empleado_nuevo,observacion,
       operacion,
       fecha_modificacion,
       usuario_modificador
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,$13,$14,$15)
   `;
 
   const values = [
@@ -34,6 +36,7 @@ async function registrarAuditoriaUsuario({
     estado_anterior, estado_nuevo,
     password_anterior, password_nuevo,
     rol_anterior, rol_nuevo,
+    empleado_anterior,empleado_nuevo,observacion,
     operacion,
     fecha,
     usuario_modificador
@@ -85,17 +88,28 @@ async function obtenerTodosLosUsuariosAudit() {
 
 // Insertar usuario
 async function insertarUsuario(datos, usuarioModificador) {
-  const { username, password, rol } = datos;
+  const { username, password, rol,empleado } = datos;
   const hashedPassword = await encrypt(password);
 
-  const sqlInsert = `
-    INSERT INTO tb_usuario (username, estado, password, rol)
-    VALUES ($1, true, $2, $3)
-    RETURNING id_usuario
+  const sqlCheck = `
+    SELECT 1 FROM tb_usuario WHERE empleado = $1
   `;
 
+ 
   try {
-    const result = await pool.query(sqlInsert, [username, hashedPassword, rol]);
+    const existe = await pool.query(sqlCheck, [empleado]);
+
+    if (existe.rowCount > 0) {
+      throw new Error("Este empleado ya tiene un usuario registrado.");
+    }
+
+    const sqlInsert = `
+    INSERT INTO tb_usuario (username, estado, password, rol,empleado)
+    VALUES ($1, true, $2, $3,$4)
+    RETURNING id_usuario
+    `;
+
+    const result = await pool.query(sqlInsert, [username, hashedPassword, rol,empleado]);
     const id_usuario = result.rows[0].id_usuario;
 
     await registrarAuditoriaUsuario({
@@ -108,6 +122,9 @@ async function insertarUsuario(datos, usuarioModificador) {
       password_nuevo: hashedPassword,
       rol_anterior: null,
       rol_nuevo: rol,
+      empleado_anterior:null,
+      empleado_nuevo:empleado,
+      observacion:'Nuevo registro',
       operacion: 'INSERT',
       usuario_modificador: usuarioModificador.usuario
     });
@@ -134,7 +151,7 @@ async function loginUsuario({ username, password }) {
 
     const token = await tokensign(row);
 
-    return { token, username: row.username, rol: row.rol };
+    return { token, username: row.username, rol: row.rol,usuario:row.empleado };
   } catch (err) {
     console.error("❌ Error en login:", err);
     throw err;
@@ -143,8 +160,7 @@ async function loginUsuario({ username, password }) {
 
 // Actualizar usuario
 async function actualizarUsuario(id, datos, usuarioModificador) {
-  const { username, password, rol, estado } = datos;
-  const hashedPassword = await encrypt(password);
+  const { username, password, rol, estado,empleado,observacion } = datos;
 
   try {
     const resultAnterior = await pool.query(
@@ -158,18 +174,34 @@ async function actualizarUsuario(id, datos, usuarioModificador) {
 
     const anterior = resultAnterior.rows[0];
 
+    const checkEmpleado = await pool.query(
+      "SELECT 1 FROM tb_usuario WHERE empleado = $1 AND id_usuario <> $2",
+      [empleado, id]
+    );
+
+    if (checkEmpleado.rowCount > 0) {
+      throw new Error("Este empleado ya está asignado a otro usuario.");
+    }
+    
+    let hashedPassword = anterior.password; // por defecto conservar contraseña anterior
+
+    if (password && password.trim() !== "") {
+      hashedPassword = await encrypt(password); // solo si se quiere cambiar
+    }
+
     const sqlUpdate = `
       UPDATE tb_usuario
-      SET username = $1, password = $2, rol = $3, estado = $4
-      WHERE id_usuario = $5
+      SET username = $1, password = $2, rol = $3,empleado=$4, estado = $5
+      WHERE id_usuario = $6
     `;
 
     await pool.query(sqlUpdate, [
       username,
       hashedPassword,
       rol,
+      empleado,
       estado,
-      id
+      id,
     ]);
 
     await registrarAuditoriaUsuario({
@@ -182,8 +214,11 @@ async function actualizarUsuario(id, datos, usuarioModificador) {
       password_nuevo: hashedPassword,
       rol_anterior: anterior.rol,
       rol_nuevo: rol,
-      operacion: 'UPDATE',
-      usuario_modificador: usuarioModificador.usuario
+      empleado_anterior:anterior.empleado,
+      empleado_nuevo:empleado,
+      observacion:observacion,
+      operacion: "UPDATE",
+      usuario_modificador: usuarioModificador.usuario,
     });
 
     return { mensaje: "Usuario actualizado y auditado" };
@@ -222,6 +257,9 @@ async function eliminarUsuario(id, usuarioModificador) {
       password_nuevo: anterior.password,
       rol_anterior: anterior.rol,
       rol_nuevo: anterior.rol,
+      empleado_anterior:anterior.empleado,
+      empleado_nuevo:anterior.empleado,
+      observacion:'Registro eliminado',
       operacion: 'DELETE',
       usuario_modificador: usuarioModificador.usuario
     });

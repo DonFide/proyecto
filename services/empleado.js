@@ -8,15 +8,14 @@ async function registrarAuditoriaEmpleado({
   ape_mat_emp_anterior, ape_mat_emp_nuevo,
   fec_nac_anterior, fec_nac_nuevo,
   especialidad_anterior, especialidad_nuevo,
-  dni_anterior, dni_nuevo,
+  numero_documento_anterior, numero_documento_nuevo,
   telefono_anterior, telefono_nuevo,
-  observacion_anterior, observacion_nuevo,
+  observacion,
   cargo_anterior, cargo_nuevo,
-  usuario_anterior, usuario_nuevo,
   estado_anterior, estado_nuevo,
   operacion, usuario
 }) {
-  const fecha = new Date().toISOString().split('T')[0];
+  const fecha = new Date(); 
 
   const sqlAudit = `
     INSERT INTO tb_audit_empleado (
@@ -25,18 +24,17 @@ async function registrarAuditoriaEmpleado({
       ape_mat_emp_anterior, ape_mat_emp_nuevo,
       fec_nac_anterior, fec_nac_nuevo,
       especialidad_anterior, especialidad_nuevo,
-      dni_anterior, dni_nuevo,
+      numero_documento_anterior, numero_documento_nuevo,
       telefono_anterior, telefono_nuevo,
-      observacion_anterior, observacion_nuevo,
+      observacion,
       cargo_anterior, cargo_nuevo,
-      usuario_anterior, usuario_nuevo,
       estado_anterior, estado_nuevo,
       operacion, fecha_modificacion, usuario_modificador
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7,
       $8, $9, $10, $11, $12, $13,
       $14, $15, $16, $17, $18, $19,
-      $20, $21, $22, $23, $24, $25, $26
+      $20, $21, $22, $23
     )
   `;
 
@@ -47,11 +45,10 @@ async function registrarAuditoriaEmpleado({
     ape_mat_emp_anterior, ape_mat_emp_nuevo,
     fec_nac_anterior, fec_nac_nuevo,
     especialidad_anterior, especialidad_nuevo,
-    dni_anterior, dni_nuevo,
+    numero_documento_anterior, numero_documento_nuevo,
     telefono_anterior, telefono_nuevo,
-    observacion_anterior, observacion_nuevo,
+    observacion,
     cargo_anterior, cargo_nuevo,
-    usuario_anterior, usuario_nuevo,
     estado_anterior, estado_nuevo,
     operacion, fecha, usuario
   ];
@@ -69,18 +66,27 @@ async function registrarAuditoriaEmpleado({
 async function insertarEmpleado(datos, usuarioModificador) {
   const {
     nombre_emp, ape_pat_emp, ape_mat_emp,
-    fec_nac, especialidad, dni, telefono,
-    observacion, cargo, usuario
+    fec_nac, especialidad, tipo_documento,numero_documento, telefono,
+    observacion, cargo
   } = datos;
+
+    const existeEmpleado = await pool.query(
+    'SELECT id_emp FROM tb_empleado WHERE numero_documento = $1',
+    [numero_documento]
+    );
+    if (existeEmpleado.rowCount > 0) {
+      throw new Error("El empleado con este numero documento ya está registrad");
+    }
+    
 
   const sqlInsert = `
     INSERT INTO tb_empleado (
       nombre_emp, ape_pat_emp, ape_mat_emp,
-      fec_nac, especialidad, dni, telefono,
-      observacion, cargo, usuario, estado
+      fec_nac, especialidad, tipo_documento,numero_documento, telefono,
+      observacion, cargo, estado
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7,
-      $8, $9, $10, true
+      $8, $9,$10, true
     )
     RETURNING id_emp
   `;
@@ -88,8 +94,8 @@ async function insertarEmpleado(datos, usuarioModificador) {
   try {
     const result = await pool.query(sqlInsert, [
       nombre_emp, ape_pat_emp, ape_mat_emp,
-      fec_nac, especialidad, dni, telefono,
-      observacion, cargo, usuario
+      fec_nac, especialidad, tipo_documento,numero_documento, telefono,
+      observacion, cargo
     ]);
     const id_emp = result.rows[0].id_emp;
 
@@ -105,16 +111,13 @@ async function insertarEmpleado(datos, usuarioModificador) {
       fec_nac_nuevo: fec_nac,
       especialidad_anterior: null,
       especialidad_nuevo: especialidad,
-      dni_anterior: null,
-      dni_nuevo: dni,
+      numero_documento_anterior: null,
+      numero_documento_nuevo: numero_documento,
       telefono_anterior: null,
       telefono_nuevo: telefono,
-      observacion_anterior: null,
-      observacion_nuevo: observacion,
+      observacion:'Nuevo registro',
       cargo_anterior: null,
       cargo_nuevo: cargo,
-      usuario_anterior: null,
-      usuario_nuevo: usuario,
       estado_anterior: null,
       estado_nuevo: true,
       operacion: 'INSERT',
@@ -127,7 +130,6 @@ async function insertarEmpleado(datos, usuarioModificador) {
     throw err;
   }
 }
-
 // Obtener empleados activos
 async function obtenerEmpleados() {
   const sql = "SELECT * FROM tb_empleado WHERE estado = true";
@@ -151,6 +153,68 @@ async function obtenerTodosLosEmpleados() {
     throw err;
   }
 }
+// Obtener todos los profesores
+async function obtenerTodosLosProfesores() {
+  const sql = `SELECT 
+  id_emp,
+  nombre_emp || ' ' || ape_pat_emp || ' ' || ape_mat_emp AS nombre_completo,
+  especialidad
+  FROM tb_empleado
+  WHERE cargo IN ('docente', 'tutor') AND estado = true`;
+  try {
+    const result = await pool.query(sql);
+    return result.rows;
+  } catch (err) {
+    console.error("❌ Error al obtener todos los empleados:", err);
+    throw err;
+  }
+}
+async function obtenerCursosPorDocenteYPeriodo(idDocente, periodo) {
+  const sql = `
+    SELECT 
+      e.cargo,
+      e.id_emp || ' - ' || e.nombre_emp || ' ' || e.ape_pat_emp AS id_nombreEmpleado,
+      u.username,
+      s.id_curso_seccion,
+      c.id_curso,
+      c.nombre_curso,
+      a.numero_aula,
+      h.nombre AS seccion,
+      g.anio || ' ' || g.nivel AS grado,
+      h.periodo
+    FROM tb_curso_seccion s
+    JOIN tb_curso c ON s.curso = c.id_curso
+    JOIN tb_empleado e ON s.docente = e.id_emp
+    JOIN tb_seccion h ON s.seccion = h.id_seccion
+    JOIN tb_grado g ON h.grado = g.id_grado
+    JOIN tb_aula a ON h.aula = a.id_aula
+    JOIN tb_usuario u ON e.id_emp = u.empleado
+    WHERE e.id_emp = $1 AND h.periodo = $2 AND s.estado = true
+  `;
+
+  try {
+    const result = await pool.query(sql, [idDocente, periodo]);
+    return result.rows;
+  } catch (err) {
+    console.error("❌ Error al obtener cursos por docente y periodo:", err);
+    throw err;
+  }
+}
+async function obtenerTodosLosEmmpleadosUsuarios() {
+  const sql = `SELECT 
+  id_emp,
+  nombre_emp || ' ' || ape_pat_emp || ' ' || ape_mat_emp AS nombre_completo,
+  especialidad
+  FROM tb_empleado
+  WHERE cargo IN ('docente', 'tutor','consultor') AND estado = true`;
+  try {
+    const result = await pool.query(sql);
+    return result.rows;
+  } catch (err) {
+    console.error("❌ Error al obtener todos los empleados:", err);
+    throw err;
+  }
+}
 // Obtener todos los empleados de auditoria
 async function obtenerTodosLosEmpleadosAuditoria() {
   const sql = "SELECT * FROM tb_audit_empleado";
@@ -164,10 +228,10 @@ async function obtenerTodosLosEmpleadosAuditoria() {
 }
 // Actualizar empleado
 async function actualizarEmpleado(id, datos, usuarioModificador) {
-  const {
+  let {
     nombre_emp, ape_pat_emp, ape_mat_emp,
-    fec_nac, especialidad, dni, telefono,
-    observacion, cargo, usuario, estado
+    fec_nac, especialidad, tipo_documento, numero_documento,telefono,
+    obs, cargo, estado
   } = datos;
 
   try {
@@ -185,15 +249,15 @@ async function actualizarEmpleado(id, datos, usuarioModificador) {
     const sqlUpdate = `
       UPDATE tb_empleado
       SET nombre_emp = $1, ape_pat_emp = $2, ape_mat_emp = $3,
-          fec_nac = $4, especialidad = $5, dni = $6, telefono = $7,
-          observacion = $8, cargo = $9, usuario = $10, estado = $11
-      WHERE id_emp = $12
+          fec_nac = $4, especialidad = $5, tipo_documento = $6, numero_documento= $7,telefono = $8,
+          cargo = $9, estado = $10
+      WHERE id_emp = $11
     `;
 
     await pool.query(sqlUpdate, [
       nombre_emp, ape_pat_emp, ape_mat_emp,
-      fec_nac, especialidad, dni, telefono,
-      observacion, cargo, usuario, estado, id
+      fec_nac, especialidad, tipo_documento,numero_documento, telefono,
+      cargo, estado, id
     ]);
 
     await registrarAuditoriaEmpleado({
@@ -208,16 +272,13 @@ async function actualizarEmpleado(id, datos, usuarioModificador) {
       fec_nac_nuevo: fec_nac,
       especialidad_anterior: anterior.especialidad,
       especialidad_nuevo: especialidad,
-      dni_anterior: anterior.dni,
-      dni_nuevo: dni,
+      numero_documento_anterior: anterior.numero_documento,
+      numero_documento_nuevo: numero_documento,
       telefono_anterior: anterior.telefono,
       telefono_nuevo: telefono,
-      observacion_anterior: anterior.observacion,
-      observacion_nuevo: observacion,
+      observacion: obs,
       cargo_anterior: anterior.cargo,
       cargo_nuevo: cargo,
-      usuario_anterior: anterior.usuario,
-      usuario_nuevo: usuario,
       estado_anterior: anterior.estado,
       estado_nuevo: estado,
       operacion: 'UPDATE',
@@ -230,7 +291,6 @@ async function actualizarEmpleado(id, datos, usuarioModificador) {
     throw err;
   }
 }
-
 // Eliminar empleado (borrado lógico)
 async function eliminarEmpleado(id, usuarioModificador) {
   try {
@@ -262,16 +322,13 @@ async function eliminarEmpleado(id, usuarioModificador) {
       fec_nac_nuevo: anterior.fec_nac,
       especialidad_anterior: anterior.especialidad,
       especialidad_nuevo: anterior.especialidad,
-      dni_anterior: anterior.dni,
-      dni_nuevo: anterior.dni,
+      numero_documento_anterior: anterior.numero_documento,
+      numero_documento_nuevo: anterior.numero_documento,
       telefono_anterior: anterior.telefono,
       telefono_nuevo: anterior.telefono,
-      observacion_anterior: anterior.observacion,
-      observacion_nuevo: anterior.observacion,
+      observacion:'Registro eliminado',
       cargo_anterior: anterior.cargo,
       cargo_nuevo: anterior.cargo,
-      usuario_anterior: anterior.usuario,
-      usuario_nuevo: anterior.usuario,
       estado_anterior: anterior.estado,
       estado_nuevo: false,
       operacion: 'DELETE',
@@ -291,5 +348,8 @@ module.exports = {
   obtenerTodosLosEmpleadosAuditoria,
   obtenerTodosLosEmpleados,
   actualizarEmpleado,
-  eliminarEmpleado
+  eliminarEmpleado,
+  obtenerTodosLosProfesores,
+  obtenerCursosPorDocenteYPeriodo,
+  obtenerTodosLosEmmpleadosUsuarios
 };

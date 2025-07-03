@@ -3,35 +3,35 @@ const pool = require("../database/db.js");
 // Auditoría de asistencia
 async function registrarAuditoriaAsistencia({
   id_asistencia,
-  alumno_anterior, alumno_nuevo,
-  fecha_anterior, fecha_nuevo,
-  dia_anterior, dia_nuevo,
+  id_matricula,
+  fecha,
+  dia,
   asistio_anterior, asistio_nuevo,
   estado_anterior, estado_nuevo,
   operacion, usuario
 }) {
-  const fecha = new Date().toISOString().split('T')[0];
+  const fecha = new Date(); 
 
   const sqlAudit = `
     INSERT INTO tb_audit_asistencia (
       id_asistencia,
-      alumno_anterior, alumno_nuevo,
-      fecha_anterior, fecha_nuevo,
-      dia_anterior, dia_nuevo,
+      id_matricula,
+      fecha,
+      dia,
       asistio_anterior, asistio_nuevo,
       estado_anterior, estado_nuevo,
       operacion, fecha_modificacion, usuario_modificador
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7,
-      $8, $9, $10, $11, $12, $13, $14
+      $8, $9, $10, $11
     )
   `;
 
   const values = [
     id_asistencia,
-    alumno_anterior, alumno_nuevo,
-    fecha_anterior, fecha_nuevo,
-    dia_anterior, dia_nuevo,
+    id_matricula,
+    fecha,
+    dia,
     asistio_anterior, asistio_nuevo,
     estado_anterior, estado_nuevo,
     operacion, fecha, usuario
@@ -48,29 +48,26 @@ async function registrarAuditoriaAsistencia({
 
 // Insertar asistencia
 async function insertarAsistencia(datos, usuarioModificador) {
-  const { alumno, fecha, dia, asistio } = datos;
+  const { alumno, fecha, dia, asistio,cursoSeccion } = datos;
 
   const sqlInsert = `
     INSERT INTO tb_asistencia (
-      alumno, fecha, dia, asistio, estado
-    ) VALUES ($1, $2, $3, $4, true)
+      alumno, fecha, dia, asistio,cursoSeccion, estado
+    ) VALUES ($1, $2, $3, $4, $5, true)
     RETURNING id_asistencia
   `;
 
   try {
     const result = await pool.query(sqlInsert, [
-      alumno, fecha, dia, asistio
+      alumno, fecha, dia, asistio,cursoSeccion
     ]);
     const id_asistencia = result.rows[0].id_asistencia;
 
     await registrarAuditoriaAsistencia({
       id_asistencia,
-      alumno_anterior: null,
-      alumno_nuevo: alumno,
-      fecha_anterior: null,
-      fecha_nuevo: fecha,
-      dia_anterior: null,
-      dia_nuevo: dia,
+      id_matricula: alumno, 
+      fecha: fecha,  
+      dia: dia,
       asistio_anterior: null,
       asistio_nuevo: asistio,
       estado_anterior: null,
@@ -86,6 +83,65 @@ async function insertarAsistencia(datos, usuarioModificador) {
   }
 }
 
+async function insertarMultiplesAsistencias(listaDatos, usuarioModificador) {
+  const resultados = [];
+  const sqlInsert = `
+      INSERT INTO tb_asistencia (
+        id_matricula, fecha, dia, asistio, id_curso_seccion, estado
+      ) VALUES ($1, $2, $3, $4, $5, true)
+      RETURNING id_asistencia
+    `;
+  for (const datos of listaDatos) {
+    const { id_matricula, fecha, dia, asistio, id_curso_seccion } = datos;
+
+      const result = await pool.query(sqlInsert, [
+        id_matricula,
+        fecha,
+        dia,
+        asistio,
+        id_curso_seccion,
+      ]);
+
+      const id_asistencia = result.rows[0].id_asistencia;
+
+      /*
+ await registrarAuditoriaAsistencia({
+        id_asistencia,
+        id_matricula: id_matricula, 
+        fecha: fecha,  
+        dia: dia,
+        asistio_anterior: null,
+        asistio_nuevo: asistio,
+        estado_anterior: null,
+        estado_nuevo: true,
+        operacion: 'INSERT',
+        usuario: usuarioModificador.usuario,
+      });
+      */
+     
+
+      resultados.push({ id: id_asistencia, mensaje: "Insertado con éxito" });
+  }
+
+  return resultados;
+}
+async function obtenerPorFechaYCurso(cursoSeccion, fecha) {
+  const sql = `
+    SELECT a.id_matricula, a.asistio
+    FROM tb_asistencia a
+    JOIN tb_matricula m ON a.id_matricula = m.id_matricula
+	JOIN tb_curso_seccion cs ON m.seccion=cs.seccion
+    WHERE cs.id_curso_seccion = $1 AND a.fecha = $2 AND a.estado = true
+  `;
+
+  try {
+    const result = await pool.query(sql, [cursoSeccion, fecha]);
+    return result.rows; // [{ id_matricula: ..., asistio: ... }, ...]
+  } catch (err) {
+    console.error("❌ Error en asistenciaService.obtenerPorFechaYCurso:", err);
+    throw err;
+  }
+}
 // Obtener asistencias activas
 async function obtenerAsistencias() {
   const sql = "SELECT * FROM tb_asistencia WHERE estado = true";
@@ -122,7 +178,7 @@ async function obtenerTodasLasAsistenciasAuditoria() {
 }
 // Actualizar asistencia
 async function actualizarAsistencia(id, datos, usuarioModificador) {
-  const { alumno, fecha, dia, asistio, estado } = datos;
+  const { asistio, estado } = datos;
 
   try {
     const resultAnterior = await pool.query(
@@ -138,23 +194,23 @@ async function actualizarAsistencia(id, datos, usuarioModificador) {
 
     const sqlUpdate = `
       UPDATE tb_asistencia
-      SET alumno = $1, fecha = $2, dia = $3,
-          asistio = $4, estado = $5
-      WHERE id_asistencia = $6
+      SET 
+          asistio = $1, estado = $2
+      WHERE id_asistencia = $3
     `;
 
     await pool.query(sqlUpdate, [
-      alumno, fecha, dia, asistio, estado, id
+       asistio, estado, id
     ]);
 
     await registrarAuditoriaAsistencia({
       id_asistencia: id,
       alumno_anterior: anterior.alumno,
-      alumno_nuevo: alumno,
+      alumno_nuevo: anterior.alumno,
       fecha_anterior: anterior.fecha,
-      fecha_nuevo: fecha,
+      fecha_nuevo: anterior.fecha,
       dia_anterior: anterior.dia,
-      dia_nuevo: dia,
+      dia_nuevo: anterior.dia,
       asistio_anterior: anterior.asistio,
       asistio_nuevo: asistio,
       estado_anterior: anterior.estado,
@@ -217,6 +273,6 @@ module.exports = {
   obtenerAsistencias,
   obtenerTodasLasAsistencias,
   actualizarAsistencia,
-  obtenerTodasLasAsistenciasAuditoria,
-  eliminarAsistencia
+  obtenerTodasLasAsistenciasAuditoria,obtenerPorFechaYCurso,
+  eliminarAsistencia,insertarMultiplesAsistencias
 };

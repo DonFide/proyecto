@@ -42,7 +42,7 @@ const actualizar = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-
+ 
 const eliminar = async (req, res) => {
   try {
     const eliminado = await gradoService.eliminarGrado(req.params.id,req.user);
@@ -57,7 +57,7 @@ module.exports = {
   crear,
   listar,
   listarAuditoria,
-  actualizar,
-  listarTodo,
+  actualizar, 
+  listarTodo, 
   eliminar
 };
